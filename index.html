@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="app-version" content="dev">
+<meta name="app-built" content="">
+<meta name="theme-color" content="#120d22">
+<meta name="description" content="taco 星際戰機：手指拖曳開飛機、按著連射，打倒三波敵機和 UFO 大魔王。手機、電腦打開就能玩。">
+<title>taco 星際戰機</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="taco戰機">
+<style>
+@font-face{font-family:"kenvector";src:url("assets/kenvector_future.ttf") format("truetype");font-display:swap}
+/* 遊戲本身是太空，淺色、深色模式都用深色畫面；選單卡片顏色跟著系統稍微調 */
+:root{--bg:#0d0a1c;--card:rgba(28,20,52,.92);--ink:#f1edff;--sub:#b3aad3;--line:#3e3366;--accent:#5ad2ff;--accent-ink:#06121c}
+@media (prefers-color-scheme:light){:root{--card:rgba(246,243,255,.95);--ink:#1f1838;--sub:#5d5680;--line:#d6cdf2;--accent:#1f9fd8;--accent-ink:#fff}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+/* 留出 iPhone 瀏海、狀態列、底部橫條的安全區域，分數和暫停鍵才不會被蓋住 */
+body{display:flex;align-items:center;justify-content:center;min-height:100dvh;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#stage{position:relative;overflow:hidden;background:#120d22}
+#game{display:block;width:100%;height:100%;touch-action:none}
+/* 選單蓋住整個螢幕（不只遊戲畫面）；螢幕太矮（手機打橫）時可以上下捲，卡片不會被切掉 */
+.overlay{position:fixed;inset:0;display:flex;overflow-y:auto;background:rgba(5,3,14,.35);
+  padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.card{margin:auto;width:100%;max-width:330px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 18px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.45)}
+.card h1{margin:0 0 4px;font:600 26px/1.2 kenvector,system-ui,sans-serif;letter-spacing:1px;color:var(--accent)}
+.card h2{margin:0 0 12px;font-size:15px;font-weight:600;color:var(--sub)}
+.card p{margin:8px 0;font-size:14px;color:var(--sub)}
+.how{text-align:left;font-size:14px;margin:12px 0;padding:0 0 0 20px;color:var(--ink)}
+.how li{margin:3px 0}
+.best{font-size:15px;margin:10px 0}
+.best b{font-family:kenvector,system-ui,sans-serif;color:var(--accent)}
+button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:12px;padding:10px 14px;cursor:pointer;touch-action:manipulation;width:100%;margin-top:8px}
+button:active{transform:scale(.97)}
+button.main{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;font-size:18px;padding:12px}
+.small{font-size:12px;color:var(--sub);margin-top:12px}
+.small a{color:var(--sub)}
+#pauseBtn{position:absolute;top:6px;right:6px;width:36px;height:30px;margin:0;padding:0;border-radius:8px;background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.25);color:#fff;font-size:14px;line-height:1}
+#endMenu{position:absolute;left:50%;bottom:14%;transform:translateX(-50%);width:auto;margin:0;padding:8px 18px;border-radius:10px;background:rgba(0,0,0,.45);border-color:rgba(255,255,255,.3);color:#fff;font-size:15px}
+#endMenu:active{transform:translateX(-50%) scale(.97)}
+#loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b3aad3;padding:24px;text-align:center}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" aria-label="遊戲畫面"></canvas>
+  <div id="loading">載入中…</div>
+  <button id="pauseBtn" hidden aria-label="暫停" tabindex="-1">❚❚</button>
+  <button id="endMenu" hidden tabindex="-1">回主選單</button>
+
+  <div id="menu" class="overlay" hidden>
+    <div class="card">
+      <h1>GALAXY FIGHTER</h1>
+      <h2>taco 星際戰機</h2>
+      <ul class="how">
+        <li>手指<b>按著拖</b>：戰機左右移動，同時自動連射</li>
+        <li>電腦：← → 移動，空白鍵射擊，P 暫停，Enter 開始</li>
+        <li>撿道具：⚡ 武器升級、🛡 護盾、＋ 補血、⭐ 加分</li>
+        <li>打完兩波敵機，打倒 UFO 大魔王就贏了</li>
+      </ul>
+      <div class="best">最高分 <b id="best">0</b></div>
+      <button id="start" class="main">開始遊戲</button>
+      <button id="sound">🔊 音效：開</button>
+      <button id="install" hidden>📲 安裝到桌面</button>
+      <p id="iosTip" hidden>iPhone：用 Safari 的「分享 → 加入主畫面」，就能像 App 一樣全螢幕玩</p>
+      <div class="small">美術、音效：<a href="https://www.kenney.nl/" target="_blank" rel="noopener">Kenney</a>（CC0）<br><span id="ver"></span></div>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay" hidden>
+    <div class="card">
+      <h1>PAUSE</h1>
+      <button id="resume" class="main">繼續</button>
+      <button id="quit">回主選單</button>
+    </div>
+  </div>
+</div>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
