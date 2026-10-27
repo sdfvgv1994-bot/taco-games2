@@ -42,17 +42,21 @@
   }
 
   function playerBox(g) {
-    return { x: g.px, y: g.H - C.PLAYER_BOTTOM + C.PLAYER_H / 2, w: C.PLAYER_W, h: C.PLAYER_H };
+    return { x: g.px, y: playerTop(g) + C.PLAYER_H / 2, w: C.PLAYER_W, h: C.PLAYER_H };
   }
 
   function playerTop(g) {
-    return g.H - C.PLAYER_BOTTOM;
+    return g.H - C.PLAYER_BOTTOM * g.sk;
   }
 
   // opts.h：畫面高度（手機比較長，就給長一點的戰場）；opts.rng：亂數（測試時給固定的）
+  // g.sk = 高度 / 600：所有「上下方向」的位置和速度都乘上它。
+  // 這樣長手機只是把整個戰場等比例拉長，敵機降到底、子彈飛到戰機的時間都跟 600 高時一樣，難度不會因為手機長短而不同。
+  // （左右方向和圖片大小不變。長手機上戰機會比較高，下面多出來的空間剛好給手指，不會蓋住戰機。）
   function newGame(opts) {
     opts = opts || {};
-    const g = { H: Math.round(opts.h || C.H), rng: opts.rng || Math.random, t: 0 };
+    const H = Math.round(opts.h || C.H);
+    const g = { H, sk: H / C.H, rng: opts.rng || Math.random, t: 0 };
     reset(g);
     return g;
   }
@@ -77,7 +81,7 @@
     nextWave(g, null);
   }
 
-  function formation() {
+  function formation(g) {
     const total = C.COLS * (C.ALIEN_W + C.PAD_X) - C.PAD_X;
     const start = Math.floor((C.W - total) / 2);
     const out = [];
@@ -85,7 +89,7 @@
       for (let c = 0; c < C.COLS; c++) {
         out.push({
           x: start + c * (C.ALIEN_W + C.PAD_X) + C.ALIEN_W / 2,
-          y: C.ALIEN_TOP + r * (C.ALIEN_H + C.PAD_Y) + C.ALIEN_H / 2,
+          y: (C.ALIEN_TOP + r * (C.ALIEN_H + C.PAD_Y)) * g.sk + C.ALIEN_H / 2,
           w: C.ALIEN_W, h: C.ALIEN_H, row: r, col: c,
         });
       }
@@ -102,11 +106,11 @@
     g.shootTimer = 0;
     g.banner = 60;   // 畫面中間顯示「WAVE x」的剩餘時間
     if (w.kind === "formation") {
-      g.aliens = formation();
+      g.aliens = formation(g);
       g.boss = null;
     } else {
       g.aliens = [];
-      g.boss = { x: C.W / 2, y: C.BOSS_Y, w: C.BOSS_BOX, h: C.BOSS_BOX, hp: C.BOSS_HP, max: C.BOSS_HP, dir: 1, timer: 0, flash: 0 };
+      g.boss = { x: C.W / 2, y: C.BOSS_Y * g.sk, w: C.BOSS_BOX, h: C.BOSS_BOX, hp: C.BOSS_HP, max: C.BOSS_HP, dir: 1, timer: 0, flash: 0 };
     }
     if (ev) ev.push({ t: "wave", n: g.wave + 1, boss: w.kind === "boss" });
   }
@@ -122,7 +126,7 @@
     const top = playerTop(g) + 2;
     const pattern = g.weapon === 1 ? [[0, 0]] : g.weapon === 2 ? [[-9, 0], [9, 0]] : [[0, 0], [-12, -2.2], [12, 2.2]];
     for (const [dx, vx] of pattern) {
-      g.bullets.push({ x: g.px + dx, y: top, vx, vy: -C.BULLET_SPEED, w: C.LASER_W, h: C.LASER_H });
+      g.bullets.push({ x: g.px + dx, y: top, vx, vy: -C.BULLET_SPEED * g.sk, w: C.LASER_W, h: C.LASER_H });
     }
     ev.push({ t: "laser" });
   }
@@ -158,7 +162,7 @@
     for (const b of g.bullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
     for (const b of g.enemyBullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
     for (const m of g.meteors) { m.x += m.vx * dt; m.y += m.vy * dt; m.angle += m.spin * dt; }
-    for (const p of g.powerups) p.y += C.POWERUP_SPEED * dt;
+    for (const p of g.powerups) p.y += C.POWERUP_SPEED * g.sk * dt;
     g.bullets = g.bullets.filter((b) => !offscreen(g, b));
     g.enemyBullets = g.enemyBullets.filter((b) => !offscreen(g, b));
     g.meteors = g.meteors.filter((m) => m.y - m.h / 2 <= g.H);
@@ -181,7 +185,7 @@
     const box = k.w - 8;
     g.meteors.push({
       x: 25 + g.rng() * (C.W - 50), y: -30, w: box, h: box,
-      vx: (g.rng() - 0.5) * 1.6, vy: 2 + g.rng() * 1.6,
+      vx: (g.rng() - 0.5) * 1.6, vy: (2 + g.rng() * 1.6) * g.sk,
       angle: g.rng() * 360, spin: (g.rng() < 0.5 ? -1 : 1) * (g.rng() < 0.33 ? 30 : 15),   // 每 tick 轉幾度
       hp: k.hp, score: k.score, kind: C.METEORS.indexOf(k),
     });
@@ -194,14 +198,14 @@
     const hit = g.aliens.some((a) => (g.dir > 0 && a.x + a.w / 2 >= C.W - C.EDGE) || (g.dir < 0 && a.x - a.w / 2 <= C.EDGE));
     if (hit) {
       g.dir *= -1;
-      for (const a of g.aliens) a.y += C.ALIEN_DROP;
+      for (const a of g.aliens) a.y += C.ALIEN_DROP * g.sk;
     }
     if (g.aliens.some((a) => a.y + a.h / 2 >= playerTop(g))) lose(g, ev);   // 敵機降到戰機那一排 = 直接輸
     g.shootTimer += dt;
     if (g.shootTimer >= g.shootInterval) {
       g.shootTimer -= g.shootInterval;
       const s = g.aliens[Math.floor(g.rng() * g.aliens.length)];
-      g.enemyBullets.push({ x: s.x, y: s.y + s.h / 2, vx: 0, vy: C.ENEMY_BULLET_SPEED, w: C.ENEMY_LASER_W, h: C.ENEMY_LASER_H });
+      g.enemyBullets.push({ x: s.x, y: s.y + s.h / 2, vx: 0, vy: C.ENEMY_BULLET_SPEED * g.sk, w: C.ENEMY_LASER_W, h: C.ENEMY_LASER_H });
     }
   }
 
@@ -214,13 +218,14 @@
     if (b.timer >= C.BOSS_SHOOT) {   // 三方向散彈
       b.timer -= C.BOSS_SHOOT;
       for (const vx of [-1.8, 0, 1.8]) {
-        g.enemyBullets.push({ x: b.x, y: b.y + b.h / 2 - 5, vx, vy: C.ENEMY_BULLET_SPEED, w: C.ENEMY_LASER_W, h: C.ENEMY_LASER_H });
+        g.enemyBullets.push({ x: b.x, y: b.y + b.h / 2 - 5, vx, vy: C.ENEMY_BULLET_SPEED * g.sk, w: C.ENEMY_LASER_W, h: C.ENEMY_LASER_H });
       }
     }
   }
 
   // 玩家雷射打到：敵機 > 隕石 > Boss。一發雷射最多打中一個目標。
   function checkPlayerBullets(g, ev) {
+    if (g.over) return;   // 同一步裡已經輸了（例如敵機剛降到底），子彈就不再算分
     const keep = [];
     for (const b of g.bullets) {
       let used = false;
@@ -314,6 +319,7 @@
   }
 
   function checkPickups(g, ev) {
+    if (g.over || g.win) return;   // 已經結束就不能再撿（不然被打死的同一步撿到補血，結束畫面血條會回升）
     const p = playerBox(g);
     g.powerups = g.powerups.filter((u) => {
       if (!overlap(u, p)) return true;

@@ -41,20 +41,27 @@
   let actx = null;
   const buffers = {};
   function initAudio() {
-    if (actx) { if (actx.state === "suspended") actx.resume(); return; }
+    if (actx) { wake(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     try { actx = new AC(); } catch (e) { return; }
     for (const [key, [file, vol]] of Object.entries(SOUNDS)) {
       fetch("assets/" + file + ".mp3").then((r) => r.arrayBuffer())
-        .then((b) => new Promise((res, rej) => actx.decodeAudioData(b, res, rej)))
+        .then((b) => new Promise((res, rej) => {
+          const p = actx.decodeAudioData(b, res, rej);   // 新瀏覽器回傳 promise，舊的用 callback；兩種錯誤都要接住
+          if (p && p.catch) p.catch(rej);
+        }))
         .then((buf) => { buffers[key] = { buf, vol }; })
         .catch(() => {});   // 某個音效讀不到就安靜，不影響遊戲
     }
   }
+  // 叫醒音效：手機切到背景再回來，狀態可能是 suspended，iPhone 還會是 interrupted
+  function wake() {
+    if (actx && actx.state !== "running" && actx.resume) actx.resume().catch(() => {});
+  }
   function play(key) {
     if (muted || !actx || !buffers[key]) return;
-    if (actx.state === "suspended") actx.resume();
+    wake();
     const src = actx.createBufferSource();
     src.buffer = buffers[key].buf;
     const gain = actx.createGain();
@@ -64,14 +71,22 @@
   }
 
   // ---------------- 畫面大小：邏輯寬 400，高度跟著手機比例變（600~860） ----------------
+  // 可以用的畫面大小 = 視窗扣掉安全區域（iPhone 瀏海、底部橫條；body 的 padding）
+  function avail() {
+    const cs = getComputedStyle(document.body);
+    const n = (v) => parseFloat(v) || 0;
+    return { w: window.innerWidth - n(cs.paddingLeft) - n(cs.paddingRight), h: window.innerHeight - n(cs.paddingTop) - n(cs.paddingBottom) };
+  }
   function gameH() {
-    const r = window.innerHeight / Math.max(1, window.innerWidth);
+    const a = avail();
+    const r = a.h / Math.max(1, a.w);
     return Math.max(600, Math.min(860, Math.round(C.W * r)));
   }
   const view = { s: 1, k: 1 };   // s：邏輯 px -> CSS px；k：再乘上螢幕密度
   function fit() {
     const H = g ? g.H : gameH();
-    const s = Math.min(window.innerWidth / C.W, window.innerHeight / H);
+    const a = avail();
+    const s = Math.min(a.w / C.W, a.h / H);
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     view.s = s;
     view.k = s * dpr;
@@ -152,8 +167,13 @@
   let pointerId = null, lastX = 0;
   const DRAG = 1.3;        // 手指移動 1 px，戰機移動 1.3 px（不用滑那麼遠）
 
+  function saveBest() {
+    if (g && g.score > best) { best = g.score; newBest = true; store.set("best", best); }
+  }
+
   function startGame() {
     initAudio();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // 不然按 Enter 會又按到剛剛點的按鈕
     g = S.newGame({ h: gameH() });
     particles = [];
     newBest = false;
@@ -164,6 +184,7 @@
     state = "play";
     $("menu").hidden = true;
     $("pause").hidden = true;
+    $("endMenu").hidden = true;
     $("pauseBtn").hidden = false;
   }
 
@@ -175,12 +196,15 @@
     $("pause").hidden = false;
   }
   function resume() {
+    initAudio();   // 在點「繼續」的當下叫醒音效（手機規定要在使用者點擊時才能恢復）
     state = "play";
     $("pause").hidden = true;
   }
   function toMenu() {
+    saveBest();   // 中途離開，這一局的分數也算
     state = "menu";
     $("pause").hidden = true;
+    $("endMenu").hidden = true;
     $("pauseBtn").hidden = true;
     $("best").textContent = best;
     $("menu").hidden = false;
@@ -195,9 +219,10 @@
         endAt = performance.now();
         input.fire = false;
         $("pauseBtn").hidden = true;
+        $("endMenu").hidden = false;
         if (e.t === "lose") play("lose");
         else play("pickup");
-        if (g.score > best) { best = g.score; newBest = true; store.set("best", best); }
+        saveBest();
       }
     }
   }
@@ -304,7 +329,8 @@
 
   function drawHud() {
     text("SCORE " + g.score, 10, 8, 15, "#fff");
-    text(`WAVE ${g.wave + 1}/${C.WAVES.length}`, C.W - 48, 10, 13, "#b4b4c8", "right");
+    const reserve = 48 / view.s;   // 暫停鍵是固定 42 個螢幕 px，畫面縮小時換算成遊戲座標會變大，所以要跟著算
+    text(`WAVE ${g.wave + 1}/${C.WAVES.length}`, C.W - reserve, 10, 13, "#b4b4c8", "right");
     const ship = IMG.playerShip1_blue;
     ctx.drawImage(ship, 10, 33, widthAt(ship, 16), 16);
     const r = g.hp / C.PLAYER_HP;
@@ -400,6 +426,7 @@
     if ((e.key === "p" || e.key === "P" || e.key === "Escape") && state === "play") pause();
     else if ((e.key === "p" || e.key === "P" || e.key === "Escape") && state === "pause") resume();
     if (e.key === "Enter" && state === "play" && g && (g.over || g.win) && performance.now() - endAt > 800) startGame();
+    else if ((e.key === "Enter" || e.key === " ") && state === "menu" && !$("menu").hidden) { e.preventDefault(); startGame(); }
   });
   window.addEventListener("keyup", (e) => { if (KEY[e.key]) keys.delete(KEY[e.key]); });
   window.addEventListener("blur", () => keys.clear());
@@ -410,7 +437,9 @@
   function soundLabel() { $("sound").textContent = muted ? "🔇 音效：關" : "🔊 音效：開"; }
   $("start").addEventListener("click", startGame);
   $("sound").addEventListener("click", () => { muted = !muted; store.set("muted", muted); soundLabel(); if (!muted) initAudio(); });
-  $("pauseBtn").addEventListener("click", pause);
+  // 用 pointerdown 而不是 click：一根手指按著在打時，另一根手指點暫停，瀏覽器不會送 click
+  $("pauseBtn").addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); pause(); });
+  $("endMenu").addEventListener("click", toMenu);
   $("resume").addEventListener("click", resume);
   $("quit").addEventListener("click", toMenu);
 
@@ -447,6 +476,8 @@
     $("loading").textContent = "圖片讀不到（" + err.message + "），請重新整理再試一次";
   });
 
-  // 給測試用（Playwright 截圖時可以直接跳到某個狀態）
-  window.__shooter = { get g() { return g; }, startGame, pause, get state() { return state; } };
+  // 給測試用（Playwright 截圖時可以直接跳到某個狀態）；正式網站不開，避免在 console 直接改分數
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+    window.__shooter = { get g() { return g; }, startGame, pause, get state() { return state; } };
+  }
 })();

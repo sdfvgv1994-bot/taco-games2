@@ -32,10 +32,13 @@ def test_app_files():
     assert re.findall(r'<script src="([^"]+)"', html) == ["core.js", "app.js"]
     assert '<meta name="app-version" content="dev">' in html
     assert re.search(r"\[hidden\][^{]*\{\s*display\s*:\s*none\s*!important", html)
-    for el in ["stage", "game", "menu", "start", "sound", "install", "iosTip", "best", "ver", "pause", "pauseBtn", "resume", "quit", "loading"]:
+    for el in ["stage", "game", "menu", "start", "sound", "install", "iosTip", "best", "ver", "pause", "pauseBtn", "resume", "quit", "loading", "endMenu"]:
         assert f'id="{el}"' in html, el
     pages = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
     assert "site/index.html" in pages and "assets" in pages and "pytest" in pages
+    sw = (ROOT / "sw.js").read_text(encoding="utf-8")
+    assert 'includes("text/html")' in sw and "const home" in sw   # 只有首頁會存到首頁的位置（離線不會打開成別的檔案）
+    assert "env(safe-area-inset-top)" in html                     # iPhone 瀏海不會蓋住分數
 
 
 def test_assets_match_code():
@@ -73,7 +76,7 @@ def test_start_and_controls():
     assert out["start"] == [40, 100, 1, 0, None]
     assert out["left"] == 20 and out["right"] == 380
     assert out["noFire"] == 0 and out["held"] == 2   # 每 8 tick 一發：16 tick 射 2 發
-    assert out["tall"] == [760, 665]
+    assert out["tall"][0] == 760 and abs(out["tall"][1] - (760 - 95 * 760 / 600)) < 1e-9
 
 
 def test_weapon_levels():
@@ -206,3 +209,33 @@ def test_full_game_with_bot():
     assert out["waves"] == [2, 3]
     assert out["win"] is True and out["over"] is False
     assert out["score"] > 1000
+
+
+def test_same_difficulty_on_tall_phones():
+    """手機長短不影響難度：敵機降到戰機那排的時間、敵方子彈飛到戰機的時間，600 高和 860 高都一樣。"""
+    if not shutil.which("node"):
+        return
+    out = run_node(PRE + """
+    const o=[];for(const h of [600,720,860]){const g=S.newGame({rng:never,h});g.shield=1e9;let i=0;
+      for(;i<5000&&!g.over;i++)S.step(g,{},0.5);
+      const b={x:200,y:100*g.sk,vy:C.ENEMY_BULLET_SPEED*g.sk};const t=(S.playerTop(g)-b.y)/b.vy;
+      o.push([i,Math.round(t*1000)/1000]);}
+    console.log(JSON.stringify(o));""")
+    steps = [x[0] for x in out]
+    assert max(steps) - min(steps) <= 0.03 * steps[0], steps
+    assert len({x[1] for x in out}) == 1, out
+
+
+def test_nothing_happens_after_game_ends():
+    """被打死的同一步碰到道具不會再撿；敵機降到底那一步打中的敵機也不加分。"""
+    if not shutil.which("node"):
+        return
+    out = run_node(PRE + """
+    const o={};let g=S.newGame({rng:never});g.hp=10;const p=S.playerBox(g);
+    g.enemyBullets.push({x:p.x,y:p.y,vx:0,vy:0,w:6,h:24});
+    for(const k of ["heal","coin"])g.powerups.push({kind:k,x:p.x,y:p.y,w:28,h:28});
+    S.step(g,{},0.01);o.pick=[g.over,g.hp,g.score];
+    g=S.newGame({rng:never});const a=g.aliens[0];g.aliens=[a];a.y=S.playerTop(g);g.bullets=[{x:a.x,y:a.y,vx:0,vy:0,w:6,h:26}];
+    S.step(g,{},0.01);o.kill=[g.over,g.score];console.log(JSON.stringify(o));""")
+    assert out["pick"] == [True, 0, 0]
+    assert out["kill"] == [True, 0]

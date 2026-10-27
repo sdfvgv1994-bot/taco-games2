@@ -55,9 +55,13 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== location.origin) return;
   const nav = req.mode === "navigate";
-  const key = nav ? new URL("./", self.registration.scope).href : url.origin + url.pathname;
+  // 只有「打開首頁」才存到首頁的位置；直接開 manifest.json、圖片這類網址時，各自存在自己的位置，
+  // 不然會把首頁蓋掉，離線打開遊戲就變成一堆 JSON 文字
+  const home = nav && (url.pathname.endsWith("/") || url.pathname.endsWith("/index.html"));
+  const key = home ? new URL("./", self.registration.scope).href : url.origin + url.pathname;
   e.respondWith(fetch(nav ? new Request(req.url, { cache: "no-cache", credentials: "same-origin" }) : req).then((res) => {
-    if (res.ok && res.status === 200) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(key, copy)); }
+    const html = (res.headers.get("content-type") || "").includes("text/html");
+    if (res.ok && res.status === 200 && (!home || html)) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(key, copy)); }
     return res;
   }).catch(() => caches.match(key).then((hit) => hit || Promise.reject(new Error("offline")))));
 });
